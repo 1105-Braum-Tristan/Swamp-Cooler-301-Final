@@ -4,7 +4,7 @@ Contributors: Thomas Braun, Tristan Braum, Richard White
 
 Github Link: https://github.com/1105-Braum-Tristan/Swamp-Cooler-301-Final 
 
-For this project we have created a 'swamp cooler'. We have simulated the swamp cooler by using a cup of water as our resevoir and a fan attached to a stepper motor. 
+For this project we have created a 'swamp cooler'. We have simulated the swamp cooler by using a cup of water as our resevoir and a stepper for vent direction control, and a motored fan as our blower. 
 
 Components:
 - Arduino Atmega 2560
