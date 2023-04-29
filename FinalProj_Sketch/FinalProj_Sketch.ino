@@ -18,10 +18,10 @@ volatile unsigned char *myUCSR0C = (unsigned char *)0x00C2;
 volatile unsigned int  *myUBRR0  = (unsigned int *) 0x00C4;
 volatile unsigned char *myUDR0   = (unsigned char *)0x00C6;
 
-volatile unsigned char* my_ADMUX   = (unsigned char*) 0x7C;
-volatile unsigned char* my_ADCSRB  = (unsigned char*) 0x7B;
-volatile unsigned char* my_ADCSRA  = (unsigned char*) 0x7A;
-volatile unsigned int* my_ADC_DATA = (unsigned int*) 0x78;
+volatile unsigned char* my_ADMUX    = (unsigned char*) 0x7C;
+volatile unsigned char* my_ADCSRB   = (unsigned char*) 0x7B;
+volatile unsigned char* my_ADCSRA   = (unsigned char*) 0x7A;
+volatile unsigned int*  my_ADC_DATA = (unsigned int*)  0x78;
 
 volatile unsigned char *portDDRB = (unsigned char *) 0x24;
 volatile unsigned char *portB    = (unsigned char *) 0x25;
@@ -51,44 +51,74 @@ void setup() {
   U0init(9600);
 
   //setup lcd
-  lcd.begin(16, 2); // two rows displayed. 16 columns
+  lcd.begin(16, 2);//16 columns, two rows
 
   dht.begin();
   adc_init();
   stepper.setSpeed(100);
-  *portDDRB |= 0b11110000;
-  *portDDRH |= 0b01100000;
+  *portDDRB |= 0xF0;
+  *portDDRH |= 0x60;
+
   attachInterrupt(digitalPinToInterrupt(2), isr, RISING);//?
 }
 
 void loop() {
-  // put your main code here, to run repeatedly:
+
   if(state == 0){
     disable();
   }
   else{
 
-    *portH != 1<<7;
+    *portH |= 1<<7;
 
+    //get values using sensor
+    unsigned int waterLevel = adc_read(5);
+    unsigned int potRead = adc_read(0);
+    temperature = dht.readTemperature();
+    humidity = dht.readHumidity();
 
+    //
+    if(potVal > prevVal){
+      stepper.step(16); //rotate half
+    }
+    if(potVal < prevVal){
+      stepper.step(-16); //rotate back
+    }
+    
+    preVal = potVal;//reset the postition for next excecution
 
+    lcd.clear();//reset screen
+    lcd.setCurser(0,0);//move curser back to starting position
+    lcd.print("Temp is ");
+    lcd.print(temperature);
+    lcd.setCurser(0,1);//set curser to the start of the second row
+    lcd.print("Humidity is");
+    lcd.print(humidity);
+
+    //turns on fan
+    fan(temperature);
   }
+}
 
-
+void fan(float temp){
+  if(temp > 20){
+    *portB |= 0x80;
+    *portH |= 0x20;
+    *portB &= 0x8F;
+    *portH &= 0xA0;
+  }
+  else{
+    *portB &= 0x7F;
+  }
 }
 
 void disable(){
-
+  //turn everything off
+  *portB |= 0x10;
+  *portB &= 0x1F;
+  *portH &= 0x9F;
+  lcd.clear();
 }
-
-
-void print_int(unsigned int out_num){
-}
-
-void motor_intialization(){
-  *portDDRB |= 0b10000000;
-}
-
 
 void U0init(unsigned long U0baud) {
  unsigned long FCPU = 16000000;
@@ -100,21 +130,6 @@ void U0init(unsigned long U0baud) {
  *myUBRR0  = tbaud;
 }
 
-unsigned char U0kbhit() {
-   return *myUCSR0A & RDA;
-}
-
-unsigned char U0getchar() {
-  return *myUDR0;
-}
-
-void U0putchar(unsigned char U0pdata) {
-  while ((*myUCSR0A & TBE)==0);
-    *myUDR0 = U0pdata;
-}
-
-
-//timer setup function
 void setup_timer_regs() {
   *myTCCR1A= 0x00;
   *myTCCR1B= 0X00;
@@ -124,7 +139,6 @@ void setup_timer_regs() {
   *myTIMSK1 |= 0x01; 
 }
 
-//initialize ADC registers
 void adc_init() {
   *my_ADCSRA |= 0b10000000;
   *my_ADCSRA &= 0b11011111; 
@@ -138,7 +152,6 @@ void adc_init() {
   *my_ADMUX  &= 0b11100000; 
 }
 
-//read analog values from ADC channel
 unsigned int adc_read(unsigned char adc_channel_num) {
   *my_ADMUX  &= 0b11100000;
   *my_ADCSRB &= 0b11110111;
@@ -153,12 +166,14 @@ unsigned int adc_read(unsigned char adc_channel_num) {
   return *my_ADC_DATA;
 }
 
-//ISR
-ISR(TIMER1_OVF_vect) {
-  *myTCCR1B &= 0xF8; 
-  *myTCNT1 = (unsigned int) (65535 - (unsigned long) (currentTicks));
-  *myTCCR1B |= 0x01;
-  if (currentTicks != 65535) {
-    *port_b ^= 0x40;
+void isr(){
+  if(state != 0){
+    disable();
+    state = 0;
+  }
+  else{
+    state = 1;
+    *portB &= ~(1<<4);
+    *portH |= 1<<6;
   }
 }
