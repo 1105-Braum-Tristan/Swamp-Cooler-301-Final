@@ -23,7 +23,4 @@ Components:
 - Water Level Detection Sensor Module
 - Potentiometer
 
-Circuit Diagram:
-
-
 Video demonstration link:  
