@@ -31,7 +31,7 @@ volatile unsigned char *portB    = (unsigned char*) 0x25;
 volatile unsigned char *portH    = (unsigned char*) 0x102;
 volatile unsigned char *portDDRH = (unsigned char*) 0x101;
 
-int state = 1;//0?
+int state = 0;
 
 //Setup dht
 const int DHT_PIN = 13;
@@ -59,9 +59,9 @@ void setup() {
 
   //setup lcd
   lcd.begin(16, 2);//16 columns, two rows
-  pinMode(backlightPin, OUTPUT);
-  digitalWrite(backlightPin, HIGH);
-  analogWrite(backlightPin, 255);
+  //pinMode(backlightPin, OUTPUT);
+  //digitalWrite(backlightPin, HIGH);
+  //analogWrite(backlightPin, 255);
 
   dht.begin();
   adc_init();
@@ -77,20 +77,20 @@ void setup() {
 
 void loop() {
 
-  if(state == 0){
+  if(state == 0){//is a state helpful if statement. It doesnt seem helpful and I dont know how to get out of the 0 state
     disable();
   }
   else{
 
+    delay(500);//delay readings
 
-    delay(1000);//delay readings
     //get values using sensor
     temperature = dht.readTemperature();
     humidity = dht.readHumidity();
     unsigned int waterLevel = adc_read(5);
     unsigned int potRead = adc_read(0);
 
-
+    checkWaterLevel(waterLevel);
 
     potVal = adc_read(potPin);
     motorSpeed = map(potVal, 0, 1023, 0, 100);
@@ -107,6 +107,62 @@ void loop() {
 
     //turns on fan
     fan(temperature);
+
+  }
+}
+void checkWaterLevel(unsigned int wl){
+  if(wl < 120){
+    char print[20] = "water level is low \n";
+    for(int i = 0; i < 20; i++){
+      U0putchar(print[i]);
+      U0getchar();
+    }
+    while(adc_read(5) < 120 && state != 0){
+      lcd.clear();
+      lcd.setCursor(0,0);
+      lcd.print("Water Low!");
+
+      //turn off fan
+      *portH &= 0xDF;//clear pin 13 PB5 to low
+      //turn red led
+      redLED(1);
+    }
+    //turn on fan
+    *portH |= 0x20; //set pin 37 PH5 to high
+    //Turn on green LED
+    greenLED(1);
+  }
+  delay(500);
+}
+void changeLEDState(int numLED){
+  //red is 1, green is 2, blue is 3, yellow is 4
+  switch(numLED){
+    case 1:
+      redLED(1);
+      greenLED(0);
+      blueLED(0);
+      yellowLED(0);
+      break;
+    case 2:
+      redLED(0);
+      greenLED(1);
+      blueLED(0);
+      yellowLED(0);
+      break;
+    case 3:
+      redLED(0);
+      greenLED(0);
+      blueLED(1);
+      yellowLED(0);
+      break;
+    case 4:
+      redLED(0);
+      greenLED(0);
+      blueLED(0);
+      yellowLED(1);
+      break;
+    default:
+        break;
   }
 }
 
@@ -125,17 +181,17 @@ void isr() {
 void fan(float temp) {
   if (temp > 20) {
     *portH |= 0x20; //set pin 37 PH5 to high
-  } else {
+    blueLED(1);
+  }else {
     *portH &= 0xDF;//clear pin 13 PB5 to low
+    greenLED(1);
   }
 }
 
 void disable(){
-  //turn everything off
-  *portB |= 0x10;
-  *portB &= 0x1F;
-  *portH &= 0x9F;
-  lcd.clear();
+  *portH &= 0xDF;//clear pin 13 PB5 to low (Turns off fan)
+  yellowLED(1);//turn on yellowLED
+  lcd.clear();//Clears lcd
 }
 
 void U0init(unsigned long U0baud) {
@@ -146,6 +202,11 @@ void U0init(unsigned long U0baud) {
  *myUCSR0B = 0x18;
  *myUCSR0C = 0x06;
  *myUBRR0  = tbaud;
+}
+void U0putchar(unsigned char U0pdata)
+{
+  while((*myUCSR0A & TBE)==0);
+  *myUDR0 = U0pdata;
 }
 
 void adc_init() {
@@ -194,6 +255,35 @@ void moveStepper() {
     currentPosition = STEPS / 2;
   } else if (currentPosition <= -STEPS / 2) {
     currentPosition = -STEPS / 2;
+  }
+}
+
+void blueLED(bool on){
+  if(on = 1){
+    *portB |= 1<<2;//turns on pin 10
+  }else{
+    *portB &= ~(1<<2);//turns off pin 10
+  }
+}
+void greenLED(bool on){
+  if(on = 1){
+    *portB |= 1<<1;//turns on pin 9
+  }else{
+    *portB &= ~(1<<1);//turns off pin 9
+  }
+}
+void yellowLED(bool on){
+  if(on = 1){
+    *portB |= 1<<0;//turns on pin 8
+  }else{
+    *portB &= ~(1<<0);//turns off pin 8
+  }
+}
+void redLED(bool on){
+  if(on = 1){
+    *portB |= 1<<7;//turns on pin 7
+  }else{
+    *portB &= ~(1<<7);//turns off pin 7
   }
 }
 
