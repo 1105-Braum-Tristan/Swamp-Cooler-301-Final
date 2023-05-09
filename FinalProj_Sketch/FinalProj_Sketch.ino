@@ -1,4 +1,4 @@
-//Thomas Braun, Richard White, Tristan Braum
+//Richie White, Thomas Braum, Tristan Braum
 //May 9, 2023
 //CPE 301
 //Final Project: Swamp Cooler
@@ -7,20 +7,19 @@
 //i dont have the ports for the buttons setup yet either
 //we should defo check all the ports to make sure they are correct
 //bool test added until i can figure out how to press a button
+  
+//What on earth does this mean from the requirements 
+//"Record the time and date every time the motor is turned on or off. This information should be transmitted to a host computer (over USB)"
 
-//do we need to print to serial monitor???
-//print error message to serial monitor
-    /*char print[20] = "Water level is low\n";
-    for(int i = 0; i < 20; i++){
-      U0putchar(print[i]);
-      U0getchar();
-    }*/
+//How do we satisfy this requirement? Instead of isr function, we now use disable() and reset()
+//"Start button should be monitored using an ISR"
 
 #include <LiquidCrystal.h>
 #include <Stepper.h>
 #include <Adafruit_Sensor.h>
 #include <DHT.h>
 #include <Wire.h>
+#include <RTClib.h>
 
 #define RDA 0x80
 #define TBE 0x20  
@@ -30,10 +29,12 @@
 //RESET button: digital 52 , PB1
 //Potentiometer: Analog 0, PF0
 
-volatile unsigned char *myUCSR0A = (unsigned char*)0x00C0;
-volatile unsigned char *myUCSR0B = (unsigned char*)0x00C1;
-volatile unsigned char *myUCSR0C = (unsigned char*)0x00C2;
-volatile unsigned int  *myUBRR0  = (unsigned int*) 0x00C4;
+volatile unsigned char *myUCSR0A = (unsigned char*) 0x00C0;
+volatile unsigned char *myUCSR0B = (unsigned char*) 0x00C1;
+volatile unsigned char *myUCSR0C = (unsigned char*) 0x00C2;
+volatile unsigned int  *myUBRR0  = (unsigned int*)  0x00C4;
+volatile unsigned char *myUDR0   = (unsigned char *)0x00C6;
+
 
 volatile unsigned char *my_ADMUX    = (unsigned char*) 0x7C;
 volatile unsigned char *my_ADCSRB   = (unsigned char*) 0x7B;
@@ -55,20 +56,23 @@ bool test = false;
 const int DHT_PIN = 13;
 const int DHT_TYPE = DHT11;
 DHT dht(DHT_PIN, DHT_TYPE);
-//float humidity = 0.0;
-//float temperature = 0.0;
 
 //Stepper motor setup
-const int STEPS = 4096;
-Stepper stepper(STEPS / 2, 23, 27, 25, 29); //num steps and pins connected to stepper 
-const int potPin = A0;
-//int motorSpeed = 0;
+const int STEPS = 4096;//Steps for full rotation
+Stepper stepper(STEPS / 2, 23, 27, 25, 29);//num steps and pins connected to stepper 
+const int potPin = A0;//analog pin for potentiometer
 int currentPosition = 0;
 int previousPosition = 0;
 
 //LCD Setup
 LiquidCrystal lcd(12, 11, 6, 5, 4, 3);
-const int backlightPin = 15; //pin number for the backlight pin
+const int backlightPin = 15;//pin number for the backlight pin, used for brightness
+
+//Fan Motor
+int motorState = 0;//0 off, 1 on
+unsigned long motorTime = 0;//Time of when motor state was changed
+
+//RTC_DS3231 rtc;//Initialize the RTC for time stamp
 
 
 void setup() {
@@ -77,6 +81,8 @@ void setup() {
 
   //setup lcd
   lcd.begin(16, 2);//16 columns, two rows
+
+  //sets lcd to max brightness
   //pinMode(backlightPin, OUTPUT);
   //digitalWrite(backlightPin, HIGH);
   //analogWrite(backlightPin, 255);
@@ -84,20 +90,23 @@ void setup() {
   dht.begin();
   adc_init();
 
+  //rtc.begin();
+
   stepper.setSpeed(0);
   pinMode(potPin, INPUT);
 
+  //?
   *portDDRB |= 0xF0;
   *portDDRH |= 0x60;
 
   //set STOP button to interrupt
-  attachInterrupt(digitalPinToInterrupt(2), disable(), RISING);
+  attachInterrupt(digitalPinToInterrupt(2), disable, RISING);
   //set REST button to interrupt for true / false
-  attachInterrupt(digitalPinToInterrupt(20) , reset() , RISING);
+  attachInterrupt(digitalPinToInterrupt(20) , reset , RISING);
 }
 
 void loop() {
-  if (getWaterLevel < 120) {
+  if(getWaterLevel < 120) {
     changeLEDState(1); //error
     stopFan();
 
@@ -107,7 +116,8 @@ void loop() {
     lcd.print("Water Low!");
   }
   else {
-    if (reset()) {
+    
+    //if (reset()) { reset() is void??
       printTempHumidity();
       moveStepper();
       
@@ -120,8 +130,9 @@ void loop() {
         stopFan();
       }
     }
-  }
+  //}
 }
+
 
 //returns temperature data
 float getTemp() {
@@ -145,12 +156,19 @@ unsigned int getPot() {
 
 //Start fan motor, set digital pin 37 to HIGH
 void startFan() {
+  motorTime = millis(); // Record the time
+  logMotorTime();
   *portH |= 0x20;
 }
 
 //Stop fan motor, clear digital pin 37 to LOW
 void stopFan() {
+  motorTime = millis(); // Record the time
   *portH &= 0xDF;
+}
+//Logs the time the state of the motor changes
+void logMotorTime(){
+  //somehow send the time to a usb?
 }
 
 //Changes the state of the LED when requested from the loop function
@@ -194,7 +212,7 @@ void printTempHumidity() {
   lcd.print(getTemp());
   lcd.setCursor(0,1);     
   lcd.print("Humidity is ");
-  lcd.print(getHumdity());
+  lcd.print(getHumidity());
 }
 
 //Disable motor fan and set LED to yellow
@@ -210,7 +228,7 @@ void reset() {
 }
 
 //moves stepper motor
-void moveStepper() {
+void moveStepper(){
   //set speed
   stepper.setSpeed(map(getPot(), 0, 1023, 0, 100));
 
@@ -218,9 +236,9 @@ void moveStepper() {
   int stepsToMove = abs(currentPosition - previousPosition);
   previousPosition = currentPosition;
   
-  if (currentPosition < previousPosition) {
+  if (currentPosition < previousPosition){
     stepper.step(stepsToMove);
-  } else if (currentPosition > previousPosition) {
+  } else if (currentPosition > previousPosition){
     stepper.step(-stepsToMove);
   }
   
@@ -228,9 +246,9 @@ void moveStepper() {
   currentPosition += stepsToMove;
   
   //Make sure it doesnt go over half a rotation
-  if (currentPosition >= STEPS / 2) {
+  if (currentPosition >= STEPS / 2){
     currentPosition = STEPS / 2;
-  } else if (currentPosition <= -STEPS / 2) {
+  } else if (currentPosition <= -STEPS / 2){
     currentPosition = -STEPS / 2;
   }
 }
