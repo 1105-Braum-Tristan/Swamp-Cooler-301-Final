@@ -1,18 +1,21 @@
-//Richie White, Thomas Braum, Tristan Braum
+//Richie White, Thomas Braun, Tristan Braum
 //May 9, 2023
 //CPE 301
 //Final Project: Swamp Cooler
 
-//i think the port for the motor is wrong
-//i dont have the ports for the buttons setup yet either
+//i think the port for the motor is wrong, should come from port C (already defined it)
 //we should defo check all the ports to make sure they are correct
 //bool test added until i can figure out how to press a button
-  
-//What on earth does this mean from the requirements 
-//"Record the time and date every time the motor is turned on or off. This information should be transmitted to a host computer (over USB)"
 
-//How do we satisfy this requirement? Instead of isr function, we now use disable() and reset()
-//"Start button should be monitored using an ISR"
+//CLOCK STUFF
+  //copied some stuff straight from a library, should work, but uses library functions such as serial.print
+  //the time span calculation is done from a method at the bottom of the file
+
+//LCD stuff idk if its useful to us at all
+  //sets lcd to max brightness
+  //pinMode(backlightPin, OUTPUT);
+  //digitalWrite(backlightPin, HIGH);
+  //analogWrite(backlightPin, 255);
 
 #include <LiquidCrystal.h>
 #include <Stepper.h>
@@ -22,18 +25,18 @@
 #include <RTClib.h>
 
 #define RDA 0x80
-#define TBE 0x20  
+#define TBE 0x20
+RTC_DS1307 rtc;
 
-//A1 water level sensor , PF1
 //STOP button: pwm 2 , PE0
-//RESET button: digital 52 , PB1
+//RESET button: comms 20 , PD1
 //Potentiometer: Analog 0, PF0
 
 volatile unsigned char *myUCSR0A = (unsigned char*) 0x00C0;
 volatile unsigned char *myUCSR0B = (unsigned char*) 0x00C1;
 volatile unsigned char *myUCSR0C = (unsigned char*) 0x00C2;
 volatile unsigned int  *myUBRR0  = (unsigned int*)  0x00C4;
-volatile unsigned char *myUDR0   = (unsigned char *)0x00C6;
+volatile unsigned char *myUDR0   = (unsigned char*)0x00C6;
 
 
 volatile unsigned char *my_ADMUX    = (unsigned char*) 0x7C;
@@ -42,15 +45,23 @@ volatile unsigned char *my_ADCSRA   = (unsigned char*) 0x7A;
 volatile unsigned int  *my_ADC_DATA = (unsigned int*)  0x78;
 
 volatile unsigned char *portB    = (unsigned char*) 0x25;
+volatile unsigned char *portC    = (unsigned char*) 0x27;
+volatile unsigned char *portD    = (unsigned char*) 0x2B;
 volatile unsigned char *portE    = (unsigned char*) 0x2E;
 volatile unsigned char *portF    = (unsigned char*) 0x31;
 volatile unsigned char *portH    = (unsigned char*) 0x102;
 volatile unsigned char *portDDRB = (unsigned char*) 0x24;
+volatile unsigned char *portDDRC = (unsigned char*) 0x28;
+volatile unsigned char *portDDRD = (unsigned char*) 0x2A;
 volatile unsigned char *portDDRE = (unsigned char*) 0x2D;
 volatile unsigned char *portDDRF = (unsigned char*) 0x30;
 volatile unsigned char *portDDRH = (unsigned char*) 0x101;
 
+//until i figure this RESET button thing out
 bool test = false;
+
+//Global timekeeping variable
+DateTime start;
 
 //DHT Setup
 const int DHT_PIN = 13;
@@ -68,44 +79,48 @@ int previousPosition = 0;
 LiquidCrystal lcd(12, 11, 6, 5, 4, 3);
 const int backlightPin = 15;//pin number for the backlight pin, used for brightness
 
-//Fan Motor
-int motorState = 0;//0 off, 1 on
-unsigned long motorTime = 0;//Time of when motor state was changed
-
-//RTC_DS3231 rtc;//Initialize the RTC for time stamp
-
-
 void setup() {
-
+  Wire.begin();
   U0init(9600);
 
-  //setup lcd
-  lcd.begin(16, 2);//16 columns, two rows
-
-  //sets lcd to max brightness
-  //pinMode(backlightPin, OUTPUT);
-  //digitalWrite(backlightPin, HIGH);
-  //analogWrite(backlightPin, 255);
-
+  lcd.begin(16, 2);//lcd setup, 16 columns, two rows
   dht.begin();
   adc_init();
 
-  //rtc.begin();
+  //rtc setup
+  #ifndef ESP8266
+    while (!Serial); // wait for serial port to connect. Needed for native USB
+  #endif
 
+  if (! rtc.begin()) {
+    //Serial.println("Couldn't find RTC");
+    //Serial.flush();
+    while (1) delay(10);
+  }
+  if (! rtc.isrunning()) {
+    //Serial.println("RTC is NOT running, let's set the time!");
+    rtc.adjust(DateTime(2023 , 5 , 9 , 18 , 0 , 0)); //2023 , May 9th , 6:00 pm
+  }
+
+  //stepper motor setup
   stepper.setSpeed(0);
   pinMode(potPin, INPUT);
 
-  //?
+  //? idk either man
   *portDDRB |= 0xF0;
   *portDDRH |= 0x60;
 
   //set STOP button to interrupt
-  attachInterrupt(digitalPinToInterrupt(2), disable, RISING);
-  //set REST button to interrupt for true / false
-  attachInterrupt(digitalPinToInterrupt(20) , reset , RISING);
+  attachInterrupt(digitalPinToInterrupt(2), disable , RISING);
+  //set RESET button to interrupt for true / false
+  attachInterrupt(digitalPinToInterrupt(19) , reset , RISING);
 }
 
 void loop() {
+  //need to find a way to print this using U0putchar instead of serial.print
+  char buffer[] = "YYMMDD-hh:mm:ss";
+  Serial.println(now.toString(buf2));
+
   if(getWaterLevel < 120) {
     changeLEDState(1); //error
     stopFan();
@@ -116,8 +131,7 @@ void loop() {
     lcd.print("Water Low!");
   }
   else {
-    
-    //if (reset()) { reset() is void??
+    if (test) {
       printTempHumidity();
       moveStepper();
       
@@ -130,7 +144,7 @@ void loop() {
         stopFan();
       }
     }
-  //}
+  }
 }
 
 
@@ -156,20 +170,23 @@ unsigned int getPot() {
 
 //Start fan motor, set digital pin 37 to HIGH
 void startFan() {
-  motorTime = millis(); // Record the time
-  logMotorTime();
   *portH |= 0x20;
+
+  start = rtc.now(); //save time of motor start
+  delay(1000); //just in case things get a little hairy
 }
 
 //Stop fan motor, clear digital pin 37 to LOW
 void stopFan() {
-  motorTime = millis(); // Record the time
-  *portH &= 0xDF;
+  *portH &= 0xDF;  //90% sure this is supposed to be 
+  
+  DateTime stop = rtc.now();  //save time of motor stop
+
+  TimeSpan ts = stop - now; //find the timespan between motor stop and start
+  showTimeSpan("Fan motor ran for: " , ts);
+  delay(1000);  //again, just in case
 }
-//Logs the time the state of the motor changes
-void logMotorTime(){
-  //somehow send the time to a usb?
-}
+
 
 //Changes the state of the LED when requested from the loop function
 //sets all unused LED's to LOW
@@ -223,6 +240,7 @@ void disable() {
   moveStepper();
 }
 
+//Set the swamp cooler to a disabled state
 void reset() {
   test = true;
 }
@@ -327,4 +345,21 @@ void redLED(bool on){
   }else{
     *portB &= ~(1<<7);//turns off pin 7
   }
+}
+
+//display the time span between two times
+void showTimeSpan(const char* txt, const TimeSpan& ts) {
+    Serial.print(txt);
+    Serial.print(" ");
+    Serial.print(ts.days(), DEC);
+    Serial.print(" days ");
+    Serial.print(ts.hours(), DEC);
+    Serial.print(" hours ");
+    Serial.print(ts.minutes(), DEC);
+    Serial.print(" minutes ");
+    Serial.print(ts.seconds(), DEC);
+    Serial.print(" seconds (");
+    Serial.print(ts.totalseconds(), DEC);
+    Serial.print(" total seconds)");
+    Serial.println();
 }
