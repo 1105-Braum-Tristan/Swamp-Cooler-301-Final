@@ -26,7 +26,6 @@
 
 #define RDA 0x80
 #define TBE 0x20
-RTC_DS1307 rtc;
 
 //STOP button: pwm 2 , PE0
 //RESET button: comms 20 , PD1
@@ -61,7 +60,8 @@ volatile unsigned char *portDDRH = (unsigned char*) 0x101;
 bool test = false;
 
 //Global timekeeping variable
-DateTime start;
+RTC_DS1307 rtc;
+//DateTime start;
 
 //DHT Setup
 const int DHT_PIN = 13;
@@ -77,9 +77,10 @@ int previousPosition = 0;
 
 //LCD Setup
 LiquidCrystal lcd(12, 11, 6, 5, 4, 3);
-const int backlightPin = 15;//pin number for the backlight pin, used for brightness
+//const int backlightPin = 15;//pin number for the backlight pin, used for brightness
 
 void setup() {
+  
   Wire.begin();
   U0init(9600);
 
@@ -87,6 +88,7 @@ void setup() {
   dht.begin();
   adc_init();
 
+  /*
   //rtc setup
   #ifndef ESP8266
     while (!Serial); // wait for serial port to connect. Needed for native USB
@@ -101,14 +103,11 @@ void setup() {
     //Serial.println("RTC is NOT running, let's set the time!");
     rtc.adjust(DateTime(2023 , 5 , 9 , 18 , 0 , 0)); //2023 , May 9th , 6:00 pm
   }
+  */
 
   //stepper motor setup
   stepper.setSpeed(0);
   pinMode(potPin, INPUT);
-
-  //? idk either man
-  *portDDRB |= 0xF0;
-  *portDDRH |= 0x60;
 
   //set STOP button to interrupt
   attachInterrupt(digitalPinToInterrupt(2), disable , RISING);
@@ -118,8 +117,8 @@ void setup() {
 
 void loop() {
   //need to find a way to print this using U0putchar instead of serial.print
-  char buffer[] = "YYMMDD-hh:mm:ss";
-  Serial.println(now.toString(buf2));
+  //char buffer[] = "YYMMDD-hh:mm:ss";
+  //Serial.println(now.toString(buf2));
 
   if(getWaterLevel < 120) {
     changeLEDState(1); //error
@@ -160,62 +159,84 @@ float getHumidity() {
 
 //returns water level of resevoir
 unsigned int getWaterLevel() {
-  return adc_read(1);
+  return adc_read(1);//A1
 }
 
 //returns potentiometer reading
 unsigned int getPot() {
-  return adc_read(0);
+  return adc_read(0);//A0
 }
 
 //Start fan motor, set digital pin 37 to HIGH
 void startFan() {
-  *portH |= 0x20;
+  //*portH |= 0x20;//old
+  *portC |= 1 << 0;//Fan port
 
-  start = rtc.now(); //save time of motor start
-  delay(1000); //just in case things get a little hairy
+  //Prints time
+  DateTime now = rtc.now();
+  serialPrint("The fan turned on at: " + String(now.timestamp()));
+  //Serial.print("The fan turned on at: " + String(now.timestamp()));
+
 }
 
 //Stop fan motor, clear digital pin 37 to LOW
 void stopFan() {
-  *portH &= 0xDF;  //90% sure this is supposed to be 
-  
-  DateTime stop = rtc.now();  //save time of motor stop
+  //*portH &= 0xDF;  //90% sure this is supposed to be //old
+  *portC &= !(1 << 0);//Fan port
 
-  TimeSpan ts = stop - now; //find the timespan between motor stop and start
-  showTimeSpan("Fan motor ran for: " , ts);
-  delay(1000);  //again, just in case
+
+  //Prints time
+  DateTime now = rtc.now();
+  serialPrint("The fan turned on at: " + String(now.timestamp()));
 }
 
 
 //Changes the state of the LED when requested from the loop function
 //sets all unused LED's to LOW
 void changeLEDState(int numLED){
+  DateTime now;
   switch(numLED){
     case 1: //red
       redLED(1);
       greenLED(0);
       blueLED(0);
       yellowLED(0);
-      break;
+
+      //Prints time
+      now = rtc.now();
+      Serial.print("Error at: " + String(now.timestamp()));
+
+        break;
     case 2: //green
+      //Prints time
+      now = rtc.now();
+      Serial.print("Idle at: " + String(now.timestamp()));
+
       redLED(0);
       greenLED(1);
       blueLED(0);
       yellowLED(0);
-      break;
+        break;
     case 3: //blue
+      //Prints time
+      now = rtc.now();
+      Serial.print("Running at: " + String(now.timestamp()));
+
       redLED(0);
       greenLED(0);
       blueLED(1);
       yellowLED(0);
-      break;
+        break;
     case 4: //yellow
+      //Prints time
+      now = rtc.now();
+      Serial.print("Disabled at: " + String(now.timestamp()));
+
       redLED(0);
       greenLED(0);
       blueLED(0);
       yellowLED(1);
-      break;
+        break;
     default:
         break;
   }
@@ -234,9 +255,13 @@ void printTempHumidity() {
 
 //Disable motor fan and set LED to yellow
 void disable() {
+
   changeLEDState(4); //yellow
   stopFan();
-  *portB &= ~(1<<4); //turn off LCD? 
+
+  lcd.clear();            
+  lcd.setCursor(0,0);
+
   moveStepper();
 }
 
@@ -269,6 +294,10 @@ void moveStepper(){
   } else if (currentPosition <= -STEPS / 2){
     currentPosition = -STEPS / 2;
   }
+
+  //Prints time
+  DateTime now = rtc.now();
+  Serial.print("The stepper has moved at: " + String(now.timestamp()));
 }
 
 //set comms rate
@@ -319,47 +348,58 @@ unsigned int adc_read(unsigned char adc_channel_num) {
 
 //set LED to HIGH or LOW based on input
 void blueLED(bool on){
-  if(on = 1){
-    *portB |= 1<<2;//turns on pin 10
+  if(on){
+    *portB |= 1<<5;//turns on pin 10
   }else{
-    *portB &= ~(1<<2);//turns off pin 10
+    *portB &= ~(1<<5);//turns off pin 10
   }
 }
 void greenLED(bool on){
-  if(on = 1){
-    *portB |= 1<<1;//turns on pin 9
+  if(on){
+    *portH |= 1<<7;//turns on pin 9
   }else{
-    *portB &= ~(1<<1);//turns off pin 9
+    *portH &= ~(1<<7);//turns off pin 9
   }
 }
 void yellowLED(bool on){
-  if(on = 1){
-    *portB |= 1<<0;//turns on pin 8
+  if(on){
+    *portH |= 1<<6;//turns on pin 8
   }else{
-    *portB &= ~(1<<0);//turns off pin 8
+    *portH &= ~(1<<6);//turns off pin 8
   }
 }
 void redLED(bool on){
-  if(on = 1){
-    *portB |= 1<<7;//turns on pin 7
+  if(on){
+    *portH |= 1<<5;//turns on pin 7
   }else{
-    *portB &= ~(1<<7);//turns off pin 7
+    *portH &= ~(1<<5);//turns off pin 7
+  }
+}
+
+void serialPrint(String phrase) {
+  for(int i=0; phrase[i] != '\0'; i++) {
+    U0putchar(phrase[i]);
   }
 }
 
 //display the time span between two times
+/*
 void showTimeSpan(const char* txt, const TimeSpan& ts) {
-    Serial.print(txt);
-    Serial.print(" ");
-    Serial.print(ts.days(), DEC);
-    Serial.print(" days ");
-    Serial.print(ts.hours(), DEC);
-    Serial.print(" hours ");
-    Serial.print(ts.minutes(), DEC);
-    Serial.print(" minutes ");
-    Serial.print(ts.seconds(), DEC);
-    Serial.print(" seconds (");
-    Serial.print(ts.totalseconds(), DEC);
-    Serial.print(" total seconds)");
-    Serial.println();
+    serialPrint(txt);
+    serialPrint(" ");
+    //convert to decial
+    serialPrint(ts.days(), DEC);
+    serialPrint(" days ");
+    //convert decimal
+    serialPrint(ts.hours(), DEC);
+    serialPrint(" hours ");
+    //convert decimal
+    serialPrint(ts.minutes(), DEC);
+    serialPrint(" minutes ");
+    serialPrint(ts.seconds(), DEC);
+    serialPrint(" seconds (");
+    serialPrint(ts.totalseconds(), DEC);
+    serialPrint(" total seconds)");
+    serialPrint('\n');
 }
+*/
