@@ -57,11 +57,12 @@ volatile unsigned char *portDDRF = (unsigned char*) 0x30;
 volatile unsigned char *portDDRH = (unsigned char*) 0x101;
 
 //until i figure this RESET button thing out
-bool test = false;
+bool printData = true;
+unsigned long previousTime = 0;
+unsigned long currentTime = 0;
 
 //Global timekeeping variable
 RTC_DS1307 rtc;
-DateTime start;
 
 //DHT Setup
 const int DHT_PIN = 13;
@@ -80,13 +81,11 @@ LiquidCrystal lcd(12, 11, 6, 5, 4, 3);
 //const int backlightPin = 15;//pin number for the backlight pin, used for brightness
 
 void setup() {
-  
-  Wire.begin();
   U0init(9600);
+  adc_init();
 
   lcd.begin(16, 2);//lcd setup, 16 columns, two rows
   dht.begin();
-  adc_init();
   rtc.begin();
   
   
@@ -107,8 +106,11 @@ void setup() {
   
 
   //stepper motor setup
-  stepper.setSpeed(0);
+  stepper.setSpeed(30);
   pinMode(potPin, INPUT);
+
+  //print temperature and humidity first time around
+  printTempHumidity();
 
   //set STOP button to interrupt
   attachInterrupt(digitalPinToInterrupt(2), disable , RISING);
@@ -117,34 +119,22 @@ void setup() {
 }
 
 void loop() {
-  //need to find a way to print this using U0putchar instead of serial.print
-  //char buffer[] = "YYMMDD-hh:mm:ss";
-  //Serial.println(now.toString(buf2));
-
-  if(getWaterLevel() < 120) {
-    changeLEDState(1); //error
-    stopFan();
-
-    //print error message to LCD
-    lcd.clear();
-    lcd.setCursor(0,0);
-    lcd.print("Water Low!");
-
-    while(getWaterLevel() < 120);
+  //update temperature and humidity reading once per minute
+  currentMillis = millis();
+  if(printData && (currentMillis - previousMillis >= 60000)) {
+    printTempHumidity();
+    previousMillis = currentMillis();
   }
-    if (test) {
-      printTempHumidity();
-      moveStepper();
-      
-      if (getTemp() >= 24) {
-        changeLEDState(3); //running
-        startFan();
-      }
-      else {
-        changeLEDState(2); //idle
-        stopFan();
-      }
+
+  //change state to error if water level is too low
+  if (getWaterLevel() < 120) {
+    changeState(1); //error state
+
+    while(getWater() < 120) {}      
     }
+  else {
+    changeState(2); //idle
+  } 
 }
 
 
@@ -182,9 +172,7 @@ void startFan() {
 
 //Stop fan motor, clear digital pin 37 to LOW
 void stopFan() {
-  //*portH &= 0xDF;  //90% sure this is supposed to be //old
   *portC &= !(1 << 0);//Fan port
-
 
   //Prints time
   DateTime now = rtc.now();
@@ -192,52 +180,74 @@ void stopFan() {
 }
 
 
-//Changes the state of the LED when requested from the loop function
-//sets all unused LED's to LOW
-void changeLEDState(int numLED){
+//Changes the state of the machine based on data / interrupts
+//1 = Error (Red)
+//2 = Idle (Green)
+//3 = Running (Blue)
+//4 = Disabled (Yellow)
+void changeState(int state){
   DateTime now;
-  switch(numLED){
+
+  switch(state){
     case 1: //red
+      //Prints time
+      now = rtc.now();
+      Serial.print("Error at: " + String(now.timestamp()));
+      stopFan();
+
+      //Print error to LCD
+      lcd.clear();
+      lcd.setCursor(0,0);
+      lcd.print("Water Low!");
+      //change LED color
       redLED(1);
       greenLED(0);
       blueLED(0);
       yellowLED(0);
-
-      //Prints time
-      now = rtc.now();
-      Serial.print("Error at: " + String(now.timestamp()));
-
         break;
+
     case 2: //green
       //Prints time
       now = rtc.now();
       Serial.print("Idle at: " + String(now.timestamp()));
+      stopFan();
 
+      //change LED color
       redLED(0);
       greenLED(1);
       blueLED(0);
       yellowLED(0);
         break;
+
     case 3: //blue
       //Prints time
       now = rtc.now();
       Serial.print("Running at: " + String(now.timestamp()));
+      startFan();
 
+      //change LED color
       redLED(0);
       greenLED(0);
       blueLED(1);
       yellowLED(0);
         break;
+
     case 4: //yellow
       //Prints time
       now = rtc.now();
       Serial.print("Disabled at: " + String(now.timestamp()));
-
+      stopFan();
+      lcd.clear();            
+      lcd.setCursor(0,0);
+      printData = false;      
+      
+      //change LED color
       redLED(0);
       greenLED(0);
       blueLED(0);
       yellowLED(1);
         break;
+
     default:
         break;
   }
@@ -256,19 +266,14 @@ void printTempHumidity() {
 
 //Disable motor fan and set LED to yellow
 void disable() {
-
-  changeLEDState(4); //yellow
-  stopFan();
-
-  lcd.clear();            
-  lcd.setCursor(0,0);
-
-  moveStepper();
+  Serial.println("Disable Pressed.");
+  changeState(4); //yellow
 }
 
 //Set the swamp cooler to a disabled state
 void reset() {
-  test = true;
+  Serial.println("Reset pressed.");
+  changeState(2);
 }
 
 //moves stepper motor
@@ -299,6 +304,42 @@ void moveStepper(){
   //Prints time
   DateTime now = rtc.now();
   Serial.print("The stepper has moved at: " + String(now.timestamp()));
+}
+
+//set LED to HIGH or LOW based on input
+void blueLED(bool on){
+  if(on){
+    *portB |= 1<<4;//turns on pin 10
+  }else{
+    *portB &= ~(1<<4);//turns off pin 10
+  }
+}
+void greenLED(bool on){
+  if(on){
+    *portH |= 1<<6;//turns on pin 9
+  }else{
+    *portH &= ~(1<<6);//turns off pin 9
+  }
+}
+void yellowLED(bool on){
+  if(on){
+    *portH |= 1<<5;//turns on pin 8
+  }else{
+    *portH &= ~(1<5);//turns off pin 8
+  }
+}
+void redLED(bool on){
+  if(on){
+    *portH |= 1<<4;//turns on pin 7
+  }else{
+    *portH &= ~(1<<4);//turns off pin 7
+  }
+}
+
+void serialPrint(String phrase) {
+  for(int i=0; phrase[i] != '\0'; i++) {
+    U0putchar(phrase[i]);
+  }
 }
 
 //set comms rate
@@ -346,61 +387,3 @@ unsigned int adc_read(unsigned char adc_channel_num) {
   while((*my_ADCSRA & 0x40) != 0);
   return *my_ADC_DATA;
 }
-
-//set LED to HIGH or LOW based on input
-void blueLED(bool on){
-  if(on){
-    *portB |= 1<<5;//turns on pin 10
-  }else{
-    *portB &= ~(1<<5);//turns off pin 10
-  }
-}
-void greenLED(bool on){
-  if(on){
-    *portH |= 1<<7;//turns on pin 9
-  }else{
-    *portH &= ~(1<<7);//turns off pin 9
-  }
-}
-void yellowLED(bool on){
-  if(on){
-    *portH |= 1<<6;//turns on pin 8
-  }else{
-    *portH &= ~(1<<6);//turns off pin 8
-  }
-}
-void redLED(bool on){
-  if(on){
-    *portH |= 1<<5;//turns on pin 7
-  }else{
-    *portH &= ~(1<<5);//turns off pin 7
-  }
-}
-
-void serialPrint(String phrase) {
-  for(int i=0; phrase[i] != '\0'; i++) {
-    U0putchar(phrase[i]);
-  }
-}
-
-//display the time span between two times
-/*
-void showTimeSpan(const char* txt, const TimeSpan& ts) {
-    serialPrint(txt);
-    serialPrint(" ");
-    //convert to decial
-    serialPrint(ts.days(), DEC);
-    serialPrint(" days ");
-    //convert decimal
-    serialPrint(ts.hours(), DEC);
-    serialPrint(" hours ");
-    //convert decimal
-    serialPrint(ts.minutes(), DEC);
-    serialPrint(" minutes ");
-    serialPrint(ts.seconds(), DEC);
-    serialPrint(" seconds (");
-    serialPrint(ts.totalseconds(), DEC);
-    serialPrint(" total seconds)");
-    serialPrint('\n');
-}
-*/
