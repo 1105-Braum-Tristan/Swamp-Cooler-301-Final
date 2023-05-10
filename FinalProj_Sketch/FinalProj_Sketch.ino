@@ -2,6 +2,7 @@
 //May 9, 2023
 //CPE 301
 //Final Project: Swamp Cooler
+//Final
 
 #include <LiquidCrystal.h>
 #include <Stepper.h>
