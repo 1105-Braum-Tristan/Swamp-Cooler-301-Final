@@ -1,21 +1,7 @@
-//Richie White, Thomas Braun, Tristan Braum
+//Richie White, Thomas Braum, Tristan Braum
 //May 9, 2023
 //CPE 301
 //Final Project: Swamp Cooler
-
-//i think the port for the motor is wrong, should come from port C (already defined it)
-//we should defo check all the ports to make sure they are correct
-//bool test added until i can figure out how to press a button
-
-//CLOCK STUFF
-  //copied some stuff straight from a library, should work, but uses library functions such as serial.print
-  //the time span calculation is done from a method at the bottom of the file
-
-//LCD stuff idk if its useful to us at all
-  //sets lcd to max brightness
-  //pinMode(backlightPin, OUTPUT);
-  //digitalWrite(backlightPin, HIGH);
-  //analogWrite(backlightPin, 255);
 
 #include <LiquidCrystal.h>
 #include <Stepper.h>
@@ -27,16 +13,11 @@
 #define RDA 0x80
 #define TBE 0x20
 
-//STOP button: pwm 2 , PE0
-//RESET button: comms 20 , PD1
-//Potentiometer: Analog 0, PF0
-
 volatile unsigned char *myUCSR0A = (unsigned char*) 0x00C0;
 volatile unsigned char *myUCSR0B = (unsigned char*) 0x00C1;
 volatile unsigned char *myUCSR0C = (unsigned char*) 0x00C2;
 volatile unsigned int  *myUBRR0  = (unsigned int*)  0x00C4;
-volatile unsigned char *myUDR0   = (unsigned char*)0x00C6;
-
+volatile unsigned char *myUDR0   = (unsigned char*) 0x00C6;
 
 volatile unsigned char *my_ADMUX    = (unsigned char*) 0x7C;
 volatile unsigned char *my_ADCSRB   = (unsigned char*) 0x7B;
@@ -56,12 +37,11 @@ volatile unsigned char *portDDRE = (unsigned char*) 0x2D;
 volatile unsigned char *portDDRF = (unsigned char*) 0x30;
 volatile unsigned char *portDDRH = (unsigned char*) 0x101;
 
-//until i figure this RESET button thing out
 bool printData = true;
 unsigned long previousTime = 0;
 unsigned long currentTime = 0;
 
-//Global timekeeping variable
+//rtc variable
 RTC_DS1307 rtc;
 
 //DHT Setup
@@ -70,44 +50,33 @@ const int DHT_TYPE = DHT11;
 DHT dht(DHT_PIN, DHT_TYPE);
 
 //Stepper motor setup
-const int STEPS = 4096;//Steps for full rotation
-Stepper stepper(STEPS / 2, 23, 27, 25, 29);//num steps and pins connected to stepper 
-const int potPin = A0;//analog pin for potentiometer
-int currentPosition = 0;
-int previousPosition = 0;
+const int STEPS = 2038;//Steps for full rotation
+Stepper stepper(STEPS, 23, 27, 25, 29);//num steps and pins connected to stepper 
+const int potPin = 0;//analog pin for potentiometer
+unsigned int potVal = 1;
+unsigned int prevPotVal = 0;
 
 //LCD Setup
 LiquidCrystal lcd(12, 11, 6, 5, 4, 3);
-//const int backlightPin = 15;//pin number for the backlight pin, used for brightness
 
 void setup() {
   U0init(9600);
+
   adc_init();
+
+  //set fan port to output
+  *portDDRC |= 1 << 0;// pin 37 output
+
 
   lcd.begin(16, 2);//lcd setup, 16 columns, two rows
   dht.begin();
   rtc.begin();
   
-  
-  //rtc setup
-  #ifndef ESP8266
-    while (!Serial); // wait for serial port to connect. Needed for native USB
-  #endif
-
-  if (! rtc.begin()) {
-    //Serial.println("Couldn't find RTC");
-    //Serial.flush();
-    while (1) delay(10);
-  }
-  if (! rtc.isrunning()) {
-    //Serial.println("RTC is NOT running, let's set the time!");
-    rtc.adjust(DateTime(2023 , 5 , 9 , 18 , 0 , 0)); //2023 , May 9th , 6:00 pm
-  }
+  rtc.adjust(DateTime(2023 , 5 , 9 , 18 , 0 , 0)); //2023 , May 9th , 6:00 pm
   
 
   //stepper motor setup
-  stepper.setSpeed(30);
-  pinMode(potPin, INPUT);
+  stepper.setSpeed(15);
 
   //print temperature and humidity first time around
   printTempHumidity();
@@ -119,66 +88,29 @@ void setup() {
 }
 
 void loop() {
+
   //update temperature and humidity reading once per minute
-  currentMillis = millis();
-  if(printData && (currentMillis - previousMillis >= 60000)) {
+  currentTime = millis();
+  if(printData && (currentTime - previousTime >= 60000)) {
     printTempHumidity();
-    previousMillis = currentMillis();
+    previousTime = currentTime;
   }
+
 
   //change state to error if water level is too low
   if (getWaterLevel() < 120) {
-    changeState(1); //error state
-
-    while(getWater() < 120) {}      
-    }
-  else {
-    changeState(2); //idle
-  } 
+    changeState(1); //Red error state
+  }
+  else if(getTemp() < 24){
+    changeState(2);//Green Idle
+  }
+  /*else if(button is pressed){
+    changeState(4);//Yellow Disabled
+  }*/
+  else{
+    changeState(3);//blue running
+  }
 }
-
-
-//returns temperature data
-float getTemp() {
-  return dht.readTemperature();
-}
-
-//returns humidity data
-float getHumidity() {
-  return dht.readHumidity();
-}
-
-//returns water level of resevoir
-unsigned int getWaterLevel() {
-  return adc_read(1);//A1
-}
-
-//returns potentiometer reading
-unsigned int getPot() {
-  return adc_read(0);//A0
-}
-
-//Start fan motor, set digital pin 37 to HIGH
-void startFan() {
-  //*portH |= 0x20;//old
-  *portC |= 1 << 0;//Fan port
-
-  //Prints time
-  DateTime now = rtc.now();
-  serialPrint("The fan turned on at: " + String(now.timestamp()));
-  //Serial.print("The fan turned on at: " + String(now.timestamp()));
-
-}
-
-//Stop fan motor, clear digital pin 37 to LOW
-void stopFan() {
-  *portC &= !(1 << 0);//Fan port
-
-  //Prints time
-  DateTime now = rtc.now();
-  serialPrint("The fan turned on at: " + String(now.timestamp()));
-}
-
 
 //Changes the state of the machine based on data / interrupts
 //1 = Error (Red)
@@ -190,20 +122,25 @@ void changeState(int state){
 
   switch(state){
     case 1: //red
+
       //Prints time
       now = rtc.now();
       Serial.print("Error at: " + String(now.timestamp()));
       stopFan();
 
       //Print error to LCD
-      lcd.clear();
-      lcd.setCursor(0,0);
+      //lcd.clear();
+      //lcd.setCursor(0,0);
       lcd.print("Water Low!");
       //change LED color
       redLED(1);
       greenLED(0);
       blueLED(0);
       yellowLED(0);
+
+      while(getWaterLevel() < 120){
+        moveVent();
+      } 
         break;
 
     case 2: //green
@@ -212,11 +149,20 @@ void changeState(int state){
       Serial.print("Idle at: " + String(now.timestamp()));
       stopFan();
 
+      printTempHumidity();
+
       //change LED color
       redLED(0);
       greenLED(1);
       blueLED(0);
       yellowLED(0);
+
+      while(getTemp() < 24){
+        moveVent();
+        if(getWaterLevel() < 120){
+          break;
+        }
+      }
         break;
 
     case 3: //blue
@@ -224,6 +170,8 @@ void changeState(int state){
       now = rtc.now();
       Serial.print("Running at: " + String(now.timestamp()));
       startFan();
+
+      printTempHumidity();
 
       //change LED color
       redLED(0);
@@ -253,10 +201,56 @@ void changeState(int state){
   }
 }
 
+void moveVent(){
+  //Move vent
+  potVal = adc_read(potPin);
+  moveStepper(potVal);
+}
+
+//returns temperature data
+float getTemp() {
+  return dht.readTemperature();
+}
+
+//returns humidity data
+float getHumidity() {
+  return dht.readHumidity();
+}
+
+//returns water level of resevoir
+unsigned int getWaterLevel() {
+  return adc_read(1);//A1
+}
+
+//returns potentiometer reading
+unsigned int getPot() {
+  return adc_read(potPin);//A0
+}
+
+//Start fan motor, set digital pin 37 to HIGH
+void startFan() {
+
+  *portC |= 1 << 0; //pin 37 high
+
+  //Prints time
+  DateTime now = rtc.now();
+  serialPrint("The fan turned on at: " + String(now.timestamp()));
+}
+
+//Stop fan motor, clear digital pin 37 to LOW
+void stopFan() {
+  *portC &= ~(1 << 0); //pin 37 low
+
+  //Prints time
+  DateTime now = rtc.now();
+  serialPrint("The fan turned on at: " + String(now.timestamp()));
+}
+
 //print temperature and humidity data
 void printTempHumidity() {
   lcd.clear();            
   lcd.setCursor(0,0);     
+  lcd.print("Hello");
   lcd.print("Temp is ");
   lcd.print(getTemp());
   lcd.setCursor(0,1);     
@@ -271,42 +265,23 @@ void disable() {
 }
 
 //Set the swamp cooler to a disabled state
-void reset() {
+void reset(){
   Serial.println("Reset pressed.");
   changeState(2);
 }
 
-//moves stepper motor
-void moveStepper(){
-  //set speed
-  stepper.setSpeed(map(getPot(), 0, 1023, 0, 100));
+void moveStepper(int potVal){
 
-  //calc num steps to move stepper
-  int stepsToMove = abs(currentPosition - previousPosition);
-  previousPosition = currentPosition;
+  unsigned int steps = map(potVal, 0, 1023, 0, STEPS);
   
-  if (currentPosition < previousPosition){
-    stepper.step(stepsToMove);
-  } else if (currentPosition > previousPosition){
-    stepper.step(-stepsToMove);
-  }
-  
-  //Update the current position
-  currentPosition += stepsToMove;
-  
-  //Make sure it doesnt go over half a rotation
-  if (currentPosition >= STEPS / 2){
-    currentPosition = STEPS / 2;
-  } else if (currentPosition <= -STEPS / 2){
-    currentPosition = -STEPS / 2;
+  if(steps != prevPotVal) {
+    stepper.step(steps - prevPotVal);
+    prevPotVal = steps;
   }
 
-  //Prints time
-  DateTime now = rtc.now();
-  Serial.print("The stepper has moved at: " + String(now.timestamp()));
+  delay(10);
 }
 
-//set LED to HIGH or LOW based on input
 void blueLED(bool on){
   if(on){
     *portB |= 1<<4;//turns on pin 10
