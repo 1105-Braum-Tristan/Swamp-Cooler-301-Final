@@ -61,7 +61,7 @@ bool test = false;
 
 //Global timekeeping variable
 RTC_DS1307 rtc;
-//DateTime start;
+DateTime start;
 
 //DHT Setup
 const int DHT_PIN = 13;
@@ -87,8 +87,9 @@ void setup() {
   lcd.begin(16, 2);//lcd setup, 16 columns, two rows
   dht.begin();
   adc_init();
-
-  /*
+  rtc.begin();
+  
+  
   //rtc setup
   #ifndef ESP8266
     while (!Serial); // wait for serial port to connect. Needed for native USB
@@ -103,7 +104,7 @@ void setup() {
     //Serial.println("RTC is NOT running, let's set the time!");
     rtc.adjust(DateTime(2023 , 5 , 9 , 18 , 0 , 0)); //2023 , May 9th , 6:00 pm
   }
-  */
+  
 
   //stepper motor setup
   stepper.setSpeed(0);
@@ -120,7 +121,7 @@ void loop() {
   //char buffer[] = "YYMMDD-hh:mm:ss";
   //Serial.println(now.toString(buf2));
 
-  if(getWaterLevel < 120) {
+  if(getWaterLevel() < 120) {
     changeLEDState(1); //error
     stopFan();
 
@@ -128,8 +129,9 @@ void loop() {
     lcd.clear();
     lcd.setCursor(0,0);
     lcd.print("Water Low!");
+
+    while(getWaterLevel() < 120);
   }
-  else {
     if (test) {
       printTempHumidity();
       moveStepper();
@@ -143,7 +145,6 @@ void loop() {
         stopFan();
       }
     }
-  }
 }
 
 
@@ -305,7 +306,7 @@ void U0init(unsigned long U0baud) {
  unsigned long FCPU = 16000000;
  unsigned int tbaud;
  tbaud = (FCPU / 16 / U0baud - 1);
- *myUCSR0A = 0x20;
+ *myUCSR0A = 0x20; 
  *myUCSR0B = 0x18;
  *myUCSR0C = 0x06;
  *myUBRR0  = tbaud;
