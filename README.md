@@ -23,4 +23,7 @@ Components:
 - Water Level Detection Sensor Module
 - Potentiometer
 
-Video demonstration link:  
+Video demonstration link:  https://youtu.be/QtcKbRp-ZnM
+
+Challenges:
+Along the lines of what we were unable to get to function properly were the DHT11 module, Liquid Crystal Display, and ISR buttons. However, we do have the code that supports the efforts we made to make all of these components work. Because of this, we are unable to reach a disabled state since the buttons are not functional. 
